@@ -1,0 +1,25 @@
+# --- Archivos de compilación de ESP-IDF ---
+build/
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# --- Archivos específicos de Espressif IDE / Eclipse ---
+.settings/
+.project
+.cproject
+.baseproject
+
+# --- Archivos de sistema ---
+.DS_Store
+Thumbs.db
+
+# --- Logs y temporales ---
+*.log
+*.tmp
+
+# --- Binarios y dumps (por si acaso) ---
+
+*.elf
+*.bin
+*.map
