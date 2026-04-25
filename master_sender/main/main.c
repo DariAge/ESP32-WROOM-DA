@@ -135,6 +135,46 @@ void i2c_init_bus() {
 /** 		 
  *@brief:  Recibe cada 200ms cadena con formato $DAT:<REAL_RPM>,<CURRENT_RAMP_RPM>,<I>,<STATE_NUMBER>#		  
  */
+ void uart_rx_task(void *arg) {
+    uint8_t rx_byte;
+    char rx_buffer[BUF_SIZE_TX];
+    int rx_idx = 0;
+    SlaveStatus_t *slave_data = (SlaveStatus_t *)arg;
+
+    while(1) {
+        // Leemos de a un byte para no perder la sincronía
+        if (uart_read_bytes(UART_PORT, &rx_byte, 1, portMAX_DELAY) > 0) {
+            
+            if (rx_byte == '$') { // Inicio de trama
+                rx_idx = 0;
+                rx_buffer[rx_idx++] = rx_byte;
+            } 
+            else if (rx_byte == '#') { // Fin de trama
+                rx_buffer[rx_idx++] = '\0';
+                
+                // Procesar trama completa: rx_buffer debe ser "$DAT:..."
+                if (strncmp(rx_buffer, "$DAT:", 5) == 0) {
+                    float f_real, f_ramp, f_curr;
+                    uint8_t u_state;
+                    if (sscanf(rx_buffer + 5, "%f,%f,%f,%hhu", &f_real, &f_ramp, &f_curr, &u_state) == 4) {
+                        if (xSemaphoreTake(slave_data->xSlaveParamsMutex, pdMS_TO_TICKS(10))) {
+                            slave_data->current_real_rpm = f_real;
+                            slave_data->current_ramp_rpm = f_ramp;
+                            slave_data->current_ma = f_curr;
+                            slave_data->system_state = u_state;
+                            xSemaphoreGive(slave_data->xSlaveParamsMutex);
+                        }
+                    }
+                }
+                rx_idx = 0; // Reset para la próxima
+            } 
+            else if (rx_idx > 0 && rx_idx < BUF_SIZE_TX - 1) {
+                rx_buffer[rx_idx++] = rx_byte;
+            }
+        }
+    }
+}
+/*
 void uart_rx_task(void *arg) {
     uint8_t data [BUF_SIZE_RX];
     //SlaveStatus_t datos_motor;
@@ -187,6 +227,7 @@ void uart_rx_task(void *arg) {
 		}
 	}//fin while(1)
 }
+*/
 
 // --- TAREA: PROCESAMIENTO DE INPUTS ---
 /**
@@ -230,19 +271,19 @@ void input_task(void *arg) {
                         break;
                         
                     case GPIO_INC_BUTTON:
-                        if(is_stopped) {
+                        
 							if(local_setpoint <= MAX_SETPOINT) local_setpoint += SETPOINT_STEP;
 							snprintf(uart_buffer, sizeof(uart_buffer), "$SET_RPM:%u#", local_setpoint);
                         	uart_write_bytes(UART_PORT, uart_buffer, strlen(uart_buffer));
-                        }
+                        
                         break;
 
                     case GPIO_DEC_BUTTON:
-                        if(is_stopped) {
+                        
                             if(local_setpoint >= MIN_SETPOINT) local_setpoint -= SETPOINT_STEP;
                             snprintf(uart_buffer, sizeof(uart_buffer), "$SET_RPM:%u#", local_setpoint);
                        		uart_write_bytes(UART_PORT, uart_buffer, strlen(uart_buffer));
-                        }
+                        
                         break;
 
                     case GPIO_SLOPE_INC:
@@ -312,7 +353,8 @@ void oled_task(void *arg) {
 		
       	// Esperamos una actualización de la UI o timeout de 200ms para refrescar telemetría
         // Esto permite que el OLED reaccione al instante a un botón o se refresque solo
-        if (xQueueReceive(oled_ui_queue, &ui_info, pdMS_TO_TICKS(200))) {
+        //modifico a no timeout
+        if (xQueueReceive(oled_ui_queue, &ui_info, 0)) {
             // Se actualizó ui_info con los datos de la cola
         }
 		
@@ -354,7 +396,9 @@ void oled_task(void *arg) {
         snprintf(buf, sizeof(buf), "COR: %4.2f mA   ", local_slave_copy.current_ma);
         ssd1306_display_text(&dev, 7, buf, 16, false);
         
-		
+		// 4. EL SECRETO: Delay obligatorio
+        // Esto permite que el procesador respire y el IDLE task no dispare el Watchdog
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 
